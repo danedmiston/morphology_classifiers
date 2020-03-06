@@ -1,0 +1,12 @@
+import pickle
+from .book_keeping import *
+
+
+
+def load_examples(language="German", feature="Case"):
+    addr = "../Datasets/Examples/" + language + "/" + feature + ".p"
+    return(pickle.load(open(addr, "rb")))
+
+def load_point_clouds(language="German", feature="Case"):
+    addr = "../Datasets/Point_Clouds/" + language + "/" + feature + ".p"
+    return(pickle.load(open(addr, "rb")))

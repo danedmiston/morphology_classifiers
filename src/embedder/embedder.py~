@@ -1,0 +1,140 @@
+from transformers import BertModel, BertTokenizer
+from utils.book_keeping import *
+from utils.tokenizer_helper import *
+from utils.loader import *
+import torch
+import pandas as pd
+import numpy as np
+from tqdm import tqdm
+import pickle
+
+class Transformer():
+    def __init__(self):
+        # Will be initialized in subclass
+        self.model = None
+        self.tokenizer = None
+
+    def retokenize_words(self, tokenized):
+        # This will be overwritten by subclass's implementation
+        return(tokenized)
+
+
+    def tokenize_by_word(self, tokenized):
+        word_tokenized = self.retokenize_words(tokenized)
+        return(word_tokenized)
+
+    def embed(self, sentence):
+        cleaned = clean_sentence(sentence)
+        tokenized = self.tokenizer.tokenize(cleaned)
+        word_tokenized = self.tokenize_by_word(tokenized)
+        indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokenized)
+        tokens_tensor = torch.tensor([indexed_tokens])
+
+        with torch.no_grad():
+            outputs = self.model(tokens_tensor)
+            hidden_states = torch.cat(outputs[2]) # layer x dim x sent-length
+            attentions = torch.cat(outputs[3]) # layer x attn-head x sent-length x sent-length
+
+        # This bit organizes hidden layer representations
+        embeddings = [(word[0], torch.mean(hidden_states[:, word[1]], dim=1, keepdim=True).squeeze())
+                      for word in word_tokenized]
+        words = [pd.DataFrame.from_dict({entry[0] : [entry[1][i].numpy() for i in range(13)]},
+                                        orient="index",
+                                        columns = [i for i in range(13)]) #Layer representations
+                 for entry in embeddings]
+        representations = pd.concat(words)
+
+        # This bit organizes attention representations
+
+        indices = [item[1] for item in word_tokenized]
+        word_attentions = np.empty((12,12,len(word_tokenized), len(word_tokenized)))
+        for i in range(12):
+            for j in range(12):
+                temp = [torch.mean(attentions[i, j, word[1]], dim=0, keepdim=True).squeeze().numpy()
+                        for word in word_tokenized]
+                temp = [collapse_columns(item,indices) for item in temp]
+                temp = np.stack(temp, axis=0)
+                word_attentions[i,j] = temp
+        
+        return(representations, word_attentions)
+
+
+    def extract_vectors(self, word, ID, sentence):
+        """
+        Extracts the contextualized embedding of word given sentence
+
+        Args:
+        word: str --- Word to be embedded
+        ID: int --- Place of word in sentence
+        sentence: str --- Sentence which provides context for word
+        """
+        assert(sentence.split()[ID] == word)
+        representations, _ = self.embed(sentence)
+        return(representations.iloc[ID])
+
+        
+    def extract_attention(self):
+        # To do
+        pass
+        
+    
+class German(Transformer):
+    def __init__(self):
+        super().__init__()
+
+        self.language = "German"
+
+        self.model = BertModel.from_pretrained(Transformers["German"],
+                                               output_hidden_states=True,
+                                               output_attentions=True)
+        self.tokenizer = BertTokenizer.from_pretrained(Transformers["German"])
+
+        
+    def retokenize_words(self, tokenized):
+        # Needs to be implemented on a model-by-model basis, as each tokenizer is different
+        words = []
+        for i in range(len(tokenized)):
+            if tokenized[i][:2] != "##":
+                if i != 0:
+                    words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
+                word = []
+                word.append((tokenized[i], i))
+            else:
+                word.append((tokenized[i][2:], i))
+        words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
+        return(words)
+
+    def embed_dataset_vectors(self, feature):
+        """
+        Takes a dataset in the Examples folder, which is a dataframe of [Word, Sentence, Value],
+        and returns/saves dataframes (one for each layer) of shape [Word, Vector, Value], where Vector
+        is the contextualized Word vector of the word in the context of the sentence.
+        
+        Args:
+        feature: str --- Some string in Features["German"]
+        """
+        examples = load_examples(self.language, feature)
+
+        
+        layers = {}
+        for layer in range(13):
+            layers[layer] = []
+
+        for id_num, row in tqdm(examples.iterrows()):
+            try:
+                word = row["Word"]
+                reps = self.extract_vectors(word=word, ID=row["ID"], sentence=row["Sentence"])
+                value = row.Value
+                for layer in range(13):
+                    layers[layer].append((word, reps[layer], value))
+            except:
+                continue                    
+        df = {}
+        for layer in range(13):
+            df[layer] = pd.DataFrame.from_records(layers[layer], columns=["Word", "Vector", "Class"])
+
+        print(len(examples))
+        print(len(df[0]))
+        pickle.dump(df, open(Point_Clouds[self.language] + feature + ".p", "wb"))
+        
+
