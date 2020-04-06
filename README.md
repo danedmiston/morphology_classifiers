@@ -58,7 +58,7 @@ python main.py --calculate_statistics True
 python main.py --test_features_classify True
 ```
 
-(10) To recreate Table 9 (from which Figure 1 were created, see /src/utils/viz.py), run the following (toggling '--random True' to recreate Table 10):
+(10) To recreate Table 9 (from which Figure 1 was created, see /src/utils/viz.py), run the following (toggling '--random True' to recreate Table 10):
 
 ```
 python main.py --test_layers_classify True
@@ -76,11 +76,13 @@ python main.py --test_ambiguity_correlation True
 python main.py --test_ambiguity_per_layer True --language German --feature Case
 ```
 
-(13) To reproduce results in Tables 5-7:
+(13) To reproduce results in Tables 5-7 and 11-13:
 
 ```
 python main.py --test_agree True
 ```
+
+
 
 
 
