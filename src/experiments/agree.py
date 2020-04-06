@@ -92,8 +92,8 @@ class Agree():
         scores_out = pd.DataFrame(scores_out, index=["Layer="+str(i) for i in range(1,13)],
                                   columns=["Head="+str(i) for i in range(1,13)])
         scores = {"agree" : scores_agree, "out" : scores_out}
-        viz_layers_heads(scores_agree.values)
-        viz_layers_heads(scores_out.values)
+        #viz_layers_heads(scores_agree.values)
+        #viz_layers_heads(scores_out.values)
         pickle.dump(scores, open(Results + self.language + "_agree.p", "wb"))
         return(scores)
 

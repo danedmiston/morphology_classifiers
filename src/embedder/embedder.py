@@ -150,7 +150,7 @@ class Transformer():
                     pass
 
             examples += batch_examples
-            print("Processed batch")
+            
             
         if dump:
             if self.random:

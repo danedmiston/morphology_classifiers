@@ -1,5 +1,6 @@
 from argparse import ArgumentParser
 import pandas as pd
+import urllib.request
 
 from conll.conll import *
 from utils.book_keeping import *
@@ -13,6 +14,7 @@ parser.add_argument("--device", type=str, default="cuda")
 parser.add_argument("--method", type=str, default="Linear")
 parser.add_argument("--language", type=str, default="German")
 parser.add_argument("--feature", type=str, default="Case")
+parser.add_argument("--download_conlls", type=bool, default=False)
 parser.add_argument("--build_datasets_classify", type=bool, default=False)
 parser.add_argument("--build_datasets_agree", type=bool, default=False)
 parser.add_argument("--calculate_ambiguities", type=bool, default=False)
@@ -25,12 +27,25 @@ parser.add_argument("--test_ambiguity_correlation", type=bool, default=False)
 parser.add_argument("--test_ambiguity_per_layer", type=bool, default=False)
 parser.add_argument("--test_agree", type=bool, default=False)
 
+def download_conlls():
+    print("Downloading CoNLL files...")
+    for language in conll_urls:
+        print("Downloading files for", language)
+        counter = 0
+        for entry in conll_urls[language]:
+            counter += 1
+            conll = urllib.request.urlopen(entry).read()
+            with open(CoNLL_Datasets[language] + "treebank-" + str(counter) + ".conllu", "wb") as fout:
+                fout.write(conll)
+        counter = 0
+
 def build_datasets_classify():
     print("Creating and saving datasets for classify tasks. This may take some time...")
     for language in Languages:
         print("Processing {0}".format(language))
         conll = CONLL(language)
         for feature in Features[language]:
+            print("Processing feature {0}".format(feature))
             try:
                 conll.create_dataset_classify(feature, n_examples=750, dump=True)
             except:
@@ -71,6 +86,7 @@ def calculate_ambiguities():
             conll.calculate_ambiguities(feature, dump=True)
 
 def calculate_statistics():
+    # Used to produce Table 2
     print("Calculating ambiguity and feature-length statistics")
     language_stats = {}
     language_stats["percent"] = {}
@@ -108,9 +124,9 @@ def embed_datasets_agree(random=False, device="cuda"):
     random: bool --- Whether or not to initialize random weights;
     could be done to create random baselines, but this wasn't done in the paper
     """
-    print("Embedding agree datasets. This may take some time...")
     for language in ["English", "French", "German"]:
         transformer = Transformer(language, random, device)
+        print("Embedding agree datasets. This may take some time...")
         print("Embedding dataset for {0}".format(language))
         transformer.embed_dataset_agree(feature="Number", batch_size=32, dump=True)
     print("All agree datasets successfully embedded.")
@@ -209,6 +225,7 @@ def test_layers_classify(random=False, device="cuda"):
     return(final)
 
 def test_ambiguity_correlation(method="Linear", random=False):
+    # Use to produce Table 4
     language_scores = {}
     language_scores["percent"] = {}
     language_scores["length"] = {}
@@ -281,6 +298,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    if args.download_conlls:
+        download_conlls()
     if args.build_datasets_classify:
         build_datasets_classify()
     if args.build_datasets_agree:
