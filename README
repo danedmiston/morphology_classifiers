@@ -1,4 +1,8 @@
+# Morphology Classifiers
+
 Code used for paper "A Systematic Analysis of Morphological Content in BERT Models for Multiple Languages" by Daniel Edmiston.
+
+## Instructions
 
 To run the experiments from the paper, follow the steps listed below. 
 
