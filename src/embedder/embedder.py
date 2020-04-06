@@ -1,303 +1,195 @@
-from transformers import BertModel, BertTokenizer, CamembertModel, CamembertTokenizer
-from utils.book_keeping import *
-from utils.tokenizer_helper import *
-from utils.loader import *
 import torch
-import pandas as pd
+from transformers import BertModel, CamembertModel
 import numpy as np
 from tqdm import tqdm
+from torch.utils.data import DataLoader
+
 from conll.lexicon import *
-import pickle
-from utils.viz import *
+from utils.book_keeping import *
+from utils.tokenizer_wrapper import *
+from .dataset import *
 
 class Transformer():
-    def __init__(self):
-        # Will be initialized in subclass
-        self.language = None
-        self.model = None
-        self.tokenizer = None
+    def __init__(self, language, random=False, device="cuda"):
+        self.language = language
+        self.random = random
+        self.device = device
 
-    def retokenize_words(self, tokenized):
-        # This will be overwritten by subclass's implementation
-        return(tokenized)
+        if self.language == "French":
+            model = CamembertModel
+        else:
+            model = BertModel
 
-
-    def tokenize_by_word(self, tokenized):
-        word_tokenized = self.retokenize_words(tokenized)
-        return(word_tokenized)
-
-    def embed(self, sentence):
-        cleaned = clean_sentence(sentence)
-        tokenized = self.tokenizer.tokenize(cleaned)
-        word_tokenized = self.tokenize_by_word(tokenized)
-        indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokenized)
-        tokens_tensor = torch.tensor([indexed_tokens])
-
-        with torch.no_grad():
-            outputs = self.model(tokens_tensor)
-            hidden_states = torch.cat(outputs[2]) # layer x dim x sent-length
-            attentions = torch.cat(outputs[3]) # layer x attn-head x sent-length x sent-length
-
-        # This bit organizes hidden layer representations
-        embeddings = [(word[0], torch.mean(hidden_states[:, word[1]], dim=1, keepdim=True).squeeze())
-                      for word in word_tokenized]
-        words = [pd.DataFrame.from_dict({entry[0] : [entry[1][i].numpy() for i in range(13)]},
-                                        orient="index",
-                                        columns = [i for i in range(13)]) #Layer representations
-                 for entry in embeddings]
-        representations = pd.concat(words)
-
-        # This bit organizes attention representations
-
-        indices = [item[1] for item in word_tokenized]
-        word_attentions = np.empty((12,12,len(word_tokenized), len(word_tokenized)))
-        for i in range(12):
-            for j in range(12):
-                temp = [torch.mean(attentions[i, j, word[1]], dim=0, keepdim=True).squeeze().numpy()
-                        for word in word_tokenized]
-                temp = [collapse_columns(item,indices) for item in temp]
-                temp = np.stack(temp, axis=0)
-                word_attentions[i,j] = temp
-        
-        return(representations, word_attentions)
-
-
-    def extract_vectors(self, word, ID, sentence):
-        """
-        Extracts the contextualized embedding of word given sentence
-
-        Args:
-        word: str --- Word to be embedded
-        ID: int --- Place of word in sentence
-        sentence: str --- Sentence which provides context for word
-        """
-        assert(sentence.split()[ID] == word)
-        representations, _ = self.embed(sentence)
-        return(representations.iloc[ID])
-
-    
-    def embed_dataset_vectors(self, feature):
-        """
-        Takes a dataset in the Examples folder, which is a dataframe of [Word, ID, Sentence, Value],
-        and returns/saves dataframes (one for each layer) of shape [Word, Ambiguity, Vector, Class], 
-        where Vector is the contextualized Word vector of the word in the context of the sentence, 
-        and Ambiguity is how ambiguous a certain entry is w.r.t. the relevant feature.
-        
-        Args:
-        feature: str --- Some string in Features[self.language]
-        """
-        examples = load_examples_classify(self.language, feature)
-
-        
-        layers = {}
-        for layer in range(13):
-            layers[layer] = []
-
-        for id_num, row in tqdm(examples.iterrows()):
-            try:
-                word = row["Word"]
-                # How ambiguous is the word w.r.t. the feature
-                ambiguity = self.lexicon.values_for_word(word, feature)
-                reps = self.extract_vectors(word=word, ID=row["ID"], sentence=row["Sentence"])
-                value = row.Value
-                for layer in range(13):
-                    layers[layer].append((word, ambiguity, reps[layer], value))
-            except:
-                continue                    
-        df = {}
-        for layer in range(13):
-            df[layer] = pd.DataFrame.from_records(layers[layer],
-                                                  columns=["Word", "Ambiguity", "Vector", "Class"])
-
-        print(len(examples))
-        print(len(df[0]))
-        pickle.dump(df, open(Point_Clouds[self.language] + feature + ".p", "wb"))
-
-
-    def extract_attention(self, agree, IDs, sentence):
-        """
-        Given a dataframe entry from Examples_Agree, extract the attention representations,
-        and provide information necessary for building dataset for experimentation
-        """
-        for i in range(len(agree)):
-            assert(agree[i] == sentence.split()[IDs[i]])
-        _, attns = self.embed(sentence)
-        return(attns)
-
-    def embed_dataset_attention(self, feature="Number"):
-        """
-        See function embed_dataset_vectors above for description
-        """
-        examples = load_examples_attention(self.language, feature)
-
-        layers = {}
-        for layer in range(12):
-            layers[layer] = []
-
-        for id_num, row in tqdm(examples.iterrows()):
-            try:
-                agree = row["Agree"]
-                ids = row["IDs"]
-                sentence = row["Sentence"]
-                attns = self.extract_attention(agree, ids, sentence)
-                value = row["Value"]
-                for layer in range(12):
-                    layers[layer].append((agree, ids, attns[layer], sentence, value))
-            except:
-                continue
-        df = {}
-        for layer in range(12):
-            df[layer] = pd.DataFrame.from_records(layers[layer],
-                                                  columns=["Agree", "IDs", "Attentions",
-                                                           "Sentence", "Value"])
-        print(len(examples))
-        print(len(df[0]))
-        pickle.dump(df, open(Attentions[self.language] + feature + ".p", "wb"))
-                
-
-        
-    
-class German(Transformer):
-    def __init__(self):
-        super().__init__()
-
-        self.language = "German"
-
-        self.model = BertModel.from_pretrained(Transformers["German"],
-                                               output_hidden_states=True,
-                                               output_attentions=True)
-        self.tokenizer = BertTokenizer.from_pretrained(Transformers["German"])
-
-        self.lexicon = Lexicon(self.language)
-        
-    def retokenize_words(self, tokenized):
-        # Needs to be implemented on a model-by-model basis, as each tokenizer is different
-        words = []
-        for i in range(len(tokenized)):
-            if tokenized[i][:2] != "##":
-                if i != 0:
-                    words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
-                word = []
-                word.append((tokenized[i], i))
-            else:
-                word.append((tokenized[i][2:], i))
-        words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
-        return(words)
-        
-
-class Russian(Transformer):
-    def __init__(self):
-        super().__init__()
-
-        self.language = "Russian"
-
-        self.model = BertModel.from_pretrained(Transformers["Russian"],
-                                               output_hidden_states=True,
-                                               output_attentions=True)
-        self.tokenizer = BertTokenizer.from_pretrained(Transformers["Russian"])
-
+        self.model = model.from_pretrained(Transformers[self.language],
+                                           output_hidden_states=True,
+                                           output_attentions=True)
+        self.tokenizer = My_Tokenizer(self.language)
         self.lexicon = Lexicon(self.language)
 
-    def retokenize_words(self, tokenized):
-        # Needs to be implemented on a model-by-model basis, as each tokenizer is different
-        # It just so happens, German's and Russian's tokenizers act identically
-        words = []
-        for i in range(len(tokenized)):
-            if tokenized[i][:2] != "##":
-                if i != 0:
-                    words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
-                word = []
-                word.append((tokenized[i], i))
+        if self.random:
+            self.model = model(config=self.model.config)
+
+        self.model.to(self.device)
+            
+    def embed_dataset_classify(self, feature, batch_size=32, dump=False):
+        """
+        feature: str --- Feature for which to embed dataset. Takes examples from
+        files in Data/Vectors/language and creates (X,y) datasets for classification
+        batch_size: int --- Batch size
+        dump: bool --- Whether or not to save the output
+        """
+        dataset = ClassificationDataset(self.language, feature)
+        iterator = DataLoader(dataset, batch_size=batch_size)
+        examples = []
+        for batch in iterator:
+            words, locs, sents, vals = batch
+            
+            tokenized = self.tokenizer.tokenizer.batch_encode_plus(list(sents),
+                                                                   add_special_tokens=False,
+                                                                   pad_to_max_length=True,
+                                                                   return_tensors="pt")
+            input_ids = tokenized["input_ids"].to(self.device)
+
+            if input_ids.shape[1] > 250:
+                tokenized = self.tokenizer.tokenizer.batch_encode_plus(list(sents),
+                                                                       add_special_tokens=False,
+                                                                       max_length = 250,
+                                                                       pad_to_max_length=True,
+                                                                       return_tensors="pt")
+                input_ids = tokenized["input_ids"].to(self.device)
+
+            attention_masks = tokenized["attention_mask"].to(self.device)
+
+
+            with torch.no_grad():
+                outputs = torch.stack(self.model(input_ids,
+                                                 attention_mask=attention_masks)[2],
+                                      dim=1)
+
+            batch_examples = []
+            # Loop over examples in batch---add good ones
+            for i in range(len(outputs)): 
+                # Collect indices for word of interest
+                word, indices = self.tokenizer.word_ids_to_token_ids(sents[i])[locs[i]]
+                # Makes sure that collecting the right indices---BertTokenizer sometimes
+                # doesn't agree with CoNLL tokenization
+                if words[i] == word:
+                    X = torch.mean(outputs[i, :, indices[0]:indices[1], :], dim=1).to("cpu")
+                    y = vals[i]
+                    batch_examples.append((word, X, y))
+                else:
+                    pass
+
+            examples += batch_examples
+
+        if dump:
+            if self.random:
+                pickle.dump(examples, open(Vectors[self.language] + feature + "_random.p", "wb"))
             else:
-                word.append((tokenized[i][2:], i))
-        words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
-        return(words)
+                pickle.dump(examples, open(Vectors[self.language] + feature + ".p", "wb"))
 
+        print("Successfully embedded {0} out of {1} possible examples.".format(len(examples),
+                                                                               len(dataset)))
+        return(examples)
+                    
 
-class Spanish(Transformer):
-    def __init__(self):
-        super().__init__()
+    def embed_dataset_agree(self, feature="Number", batch_size=32, dump=False):
+        """
+        feature: str --- Per paper, only implemented for Eng,Fr,De for Number
+        batch_size: int --- Batch size
+        dump: bool --- Whether or not to save output
+        """
+        dataset = AgreeDataset(self.language, feature)
+        iterator = DataLoader(dataset, batch_size=batch_size)
+        examples = []
 
-        self.language = "Spanish"
+        for batch in iterator:
+            agrees, ids, sents, vals = batch
 
-        self.model = BertModel.from_pretrained(Transformers["Spanish"],
-                                               output_hidden_states=True,
-                                               output_attentions=True)
-        self.tokenizer = BertTokenizer.from_pretrained(Transformers["Spanish"])
+            tokenized = self.tokenizer.tokenizer.batch_encode_plus(list(sents),
+                                                                   add_special_tokens=False,
+                                                                   pad_to_max_length=True,
+                                                                   return_tensors="pt")
+            input_ids = tokenized["input_ids"].to(self.device)
 
-        self.lexicon = Lexicon(self.language)
+            if input_ids.shape[1] > 250:
+                tokenized = self.tokenizer.tokenizer.batch_encode_plus(list(sents),
+                                                                       add_special_tokens=False,
+                                                                       max_length = 250,
+                                                                       pad_to_max_length=True,
+                                                                       return_tensors="pt")
+                input_ids = tokenized["input_ids"].to(self.device)
 
-    def retokenize_words(self, tokenized):
-        # Needs to be implemented on a model-by-model basis, as each tokenizer is different
-        # It just so happens, Spanish's tokenizer in this case ALSO works identically
-        words = []
-        for i in range(len(tokenized)):
-            if tokenized[i][:2] != "##":
-                if i != 0:
-                    words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
-                word = []
-                word.append((tokenized[i], i))
+            attention_masks = tokenized["attention_mask"].to(self.device)
+
+            
+            with torch.no_grad():
+                outputs = torch.stack(self.model(input_ids,
+                                                 attention_mask=attention_masks)[3],
+                                      dim=1)
+
+            batch_examples = []
+            #Loop over examples in batch---add good ones
+            for i in range(len(outputs)):
+                #[(str, (int,int))]
+                words_to_tokens_map = self.tokenizer.word_ids_to_token_ids(sents[i]) 
+                words = [item[0] for item in words_to_tokens_map]
+                indices = [item[1] for item in words_to_tokens_map]
+                # Ensure alignment between BERT tokenizer and conll ordering
+                if all([agrees[j][i]==words[int(ids[j][i])] for j in range(len(agrees))]):
+                    attns = torch.empty(12, 12, len(indices), len(indices))
+                    for j in range(12):
+                        for k in range(12):
+                            X = self.process_attention_matrix(outputs[i][j][k], indices)
+                            attns[j][k] = X
+                    agree_set = (ids[0][i], ids[1][i])
+                    sentence = sents[i]
+                    batch_examples.append((agree_set, sentence, attns))
+                    
+                else:
+                    pass
+
+            examples += batch_examples
+            print("Processed batch")
+            
+        if dump:
+            if self.random:
+                pickle.dump(examples, open(Attentions[self.language] + feature + "_random.p", "wb"))
             else:
-                word.append((tokenized[i][2:], i))
-        words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
-        return(words)
+                pickle.dump(examples, open(Attentions[self.language] + feature + ".p", "wb"))
 
-    
-class English(Transformer):
-    def __init__(self):
-        super().__init__()
-
-        self.language = "English"
-
-        self.model = BertModel.from_pretrained(Transformers["English"],
-                                               output_hidden_states=True,
-                                               output_attentions=True)
-        self.tokenizer = BertTokenizer.from_pretrained(Transformers["English"])
-
-        self.lexicon = Lexicon(self.language)
-
-    def retokenize_words(self, tokenized):
-        # Needs to be implemented on a model-by-model basis, as each tokenizer is different
-        # Apparently, all the tokenizers are the same, since they are all Bert-base...
-        words = []
-        for i in range(len(tokenized)):
-            if tokenized[i][:2] != "##":
-                if i != 0:
-                    words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
-                word = []
-                word.append((tokenized[i], i))
-            else:
-                word.append((tokenized[i][2:], i))
-        words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
-        return(words)
+        print("Successfully embedded {0} out of {1} possible examples.".format(len(examples),
+                                                                               len(dataset)))
+        return(examples)
 
 
-class French(Transformer):
-    def __init__(self):
-        super().__init__()
+    def process_attention_matrix(self, distributions, indices):
+        """
+        Takes an attention matrix of n x n, where n is num of tokens, and reshapes it
+        to m x m, where m is number of words. Averages token distributions to get 
+        word distributions, then sums token probabilities in columns to get word
+        probability
 
-        self.language = "French"
-
-        self.model = CamembertModel.from_pretrained(Transformers["French"],
-                                                    output_hidden_states=True,
-                                                    output_attentions=True)
-        self.tokenizer = CamembertTokenizer.from_pretrained(Transformers["French"])
-
-        self.lexicon = Lexicon(self.language)
-
-    def retokenize_words(self, tokenized):
-        # A different tokenizer!
-        words = []
-        for i in range(len(tokenized)):
-            if tokenized[i][0] == "▁":
-                if i != 0:
-                    words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
-                word = []
-                word.append((tokenized[i][1:], i))
-            else:
-                word.append((tokenized[i], i))
-        words.append(("".join([item[0] for item in word]), [item[1] for item in word]))
-        return(words)
+        distribution: tensor --- An n x n attention output where n = sequence length
+        indices: [(int,int)] --- Inidices showing where each word starts and ends
+        """
+        temp = torch.stack([torch.mean(distributions[index[0]:index[1]], dim=0)
+                            for index in indices], dim=0)
+        col_collapser = self.column_collapser(temp, indices)
+        return(torch.matmul(temp.double(), col_collapser.double()))
         
-
         
+    def column_collapser(self, dists, indices):
+        """
+        Helper function for self.process_attention_matrix
+
+        dists: tensor --- temporary attn matrix of size m x n, rows already collapsed
+        indices: [(int, int)] --- Start and end index for each word
+        """
+        n_cols = len(indices) # 
+        C = np.zeros((dists.shape[-1], n_cols), int)
+        for column in range(len(C.T)):
+            start = indices[column][0]
+            end = indices[column][1]
+            C[start : end, column] = 1
+        return(torch.tensor(C).to(self.device))

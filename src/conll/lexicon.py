@@ -21,7 +21,7 @@ class Lexicon():
         For example, `eat' in English is three-way ambiguous for Person
         I eat (1st), you eat (2nd), they eat (3rd)
         """
-        possible_values = [list(value)[0] for value in self.features[feature]]
+        possible_values = [value for value in self.features[feature]]
         attributed_values = []
         results = self.lookup(word)
         for _, row in results.iterrows():

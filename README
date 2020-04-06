@@ -1,1 +1,19 @@
-Read me
+Code for paper "A Systematic Analysis of Morphological Content in BERT Models."
+
+Steps to reproduce results in paper.
+
+(1) Download conll files. 
+
+I HAVE DONE THIS; NEED TO DOWNLOAD THE LEXICON FILES!
+
+(2) Download lexicon files
+
+(3a) Build classifier dataset
+
+(3b) Embed classifier dataset
+
+(4a) Build agree dataset
+
+(4b) Embed classifier dataset
+
+DON'T FORGET TO TALK ABOUT HOW SINCE THERE IS RANDOM SAMPLING OF 750 EXAMPLE WHEN CREATING THE DATASETS, RESULTS MAY NOT BE EXACTLY THE SAME

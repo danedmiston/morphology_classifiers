@@ -1,18 +1,25 @@
 import pickle
 from .book_keeping import *
 import pandas as pd
-
+from embedder.dataset import *
 
 def load_examples_classify(language="German", feature="Case"):
-    addr = "../Datasets/Examples_Classify/" + language + "/" + feature + ".p"
-    return(pickle.load(open(addr, "rb")))
+    dataset = ClassificationDataset(language, feature)
+    return(dataset)
 
 def load_examples_attention(language="German", feature="Number"):
-    addr = "../Datasets/Examples_Agree/" + language + "/" + feature + ".p"
+    dataset = AgreeDataset(language, feature)
+    return(dataset)
+
+def load_ambiguities(language="German", feature="Number"):
+    addr = Ambiguity[language] + feature + ".p"
     return(pickle.load(open(addr, "rb")))
 
-def load_point_clouds(language="German", feature="Case"):
-    addr = "../Datasets/Point_Clouds/" + language + "/" + feature + ".p"
+def load_vectors(language="German", feature="Case", random=False):
+    if random:
+        addr = "../Datasets/Vectors/" + language + "/" + feature + "_random.p"
+    else:
+        addr = "../Datasets/Vectors/" + language + "/" + feature + ".p"
     return(pickle.load(open(addr, "rb")))
 
 def load_attentions(language="German", feature="Number"):
